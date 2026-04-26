@@ -1,68 +1,200 @@
-const { createApp, ref } = Vue;
-const PROXY = 'https://proxy.api.030101.xyz/';
-
-createApp({
-    setup() {
-        const keyword = ref('');
-        const songs = ref([]);
-        const loading = ref(false);
-        const currentSong = ref(null);
-        const currentPlayUrl = ref('');
-        const errorMsg = ref('');
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>音乐网 | 纯净体验</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        body {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            min-height: 100vh; color: white; position: relative;
+        }
+        body::before {
+            content: ''; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle at 20% 50%, rgba(168, 85, 247, 0.1) 0%, transparent 50%);
+            pointer-events: none; z-index: 0;
+        }
+        .glass-modern {
+            background: rgba(15, 12, 41, 0.7); backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .lyric-container {
+            height: 200px; overflow-y: hidden; position: relative;
+            mask-image: linear-gradient(to bottom, transparent, black 20%, black 80%, transparent);
+        }
+        .lyric-wrapper { transition: transform 0.3s ease-out; text-align: center; }
+        .lyric-line { padding: 10px 0; font-size: 1rem; color: rgba(255,255,255,0.3); }
+        .lyric-line.active { color: #a855f7; font-size: 1.2rem; font-weight: bold; }
+        .rotate-slow { animation: spin 20s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .song-item:hover { background: rgba(168, 85, 247, 0.1); }
+    </style>
+</head>
+<body>
+    <div id="app" class="relative z-10 max-w-4xl mx-auto px-4 py-12">
+        <div class="text-center mb-10">
+            <h1 class="text-5xl font-extrabold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent mb-2">音乐网</h1>
+            <p class="text-white/40 text-sm tracking-widest uppercase">LX-Source 驱动 · 极简主义</p>
+        </div>
         
-        // 核心：全 HTTPS 稳定线路池
-        const getSources = (song) => {
-            const encodedName = encodeURIComponent(song.name + ' ' + song.artist);
-            return [
-                // 线路 1：咪咕音乐 HTTPS 源 (版权歌最稳，包含周杰伦)
-                `https://api.paugram.com/music/?source=migu&name=${encodedName}`,
-                // 线路 2：网易云官方解析 (HTTPS)
-                `https://api.uomg.com/api/rand.music?format=json&name=${encodedName}`,
-                // 线路 3：第三方聚合解析
-                `https://music.nxinxz.com/kgqq/tx.php?id=${song.mid}&level=standard&type=mp3`,
-                // 线路 4：兜底线路
-                `https://api.vvhan.com/api/music?id=${song.mid}`
-            ];
-        };
+        <div class="glass-modern rounded-3xl p-6 mb-8">
+            <div class="flex gap-3">
+                <input v-model="keyword" @keyup.enter="searchMusic" type="text" placeholder="输入歌名、歌手（例如：晴天）" 
+                       class="flex-1 px-6 py-4 rounded-2xl bg-white/5 border border-white/10 text-white outline-none focus:border-purple-500 transition-all">
+                <button @click="searchMusic" :disabled="loading" class="bg-white text-black px-8 py-4 rounded-2xl font-bold hover:bg-purple-500 hover:text-white transition-all flex items-center gap-2">
+                    <span v-if="loading" class="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></span>
+                    {{ loading ? '搜索中' : '搜索' }}
+                </button>
+            </div>
+        </div>
 
-        const searchMusic = async () => {
-            if (!keyword.value.trim()) return;
-            loading.value = true;
-            errorMsg.value = '';
-            try {
-                // 保持原有的 QQ 音乐搜索逻辑
-                const postData = { req_1: { method: "DoSearchForQQMusicDesktop", module: "music.search.SearchCgiService", param: { num_per_page: 20, page_num: 1, query: keyword.value, search_type: 0 } } };
-                const res = await axios.post(PROXY + 'https://u.y.qq.com/cgi-bin/musicu.fcg', postData);
-                const list = res.data.req_1.data.body.song.list || [];
-                songs.value = list.map(s => ({
-                    id: s.id, mid: s.mid, name: s.name, artist: s.singer.map(si => si.name).join('/'),
-                    cover: `https://y.gtimg.cn/music/photo_new/T002R300x300M000${s.album.mid}.jpg`
-                }));
-            } catch (e) {
-                errorMsg.value = "搜索接口响应超时";
-            } finally { loading.value = false; }
-        };
+        <div v-if="currentSong" class="glass-modern rounded-3xl p-8 mb-8 border border-purple-500/20 shadow-2xl">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                <div class="text-center md:text-left">
+                    <img :src="currentSong.cover" class="w-44 h-44 mx-auto md:mx-0 rounded-full object-cover shadow-2xl rotate-slow border-4 border-white/10 mb-4">
+                    <h2 class="text-2xl font-bold mb-1">{{ currentSong.name }}</h2>
+                    <p class="text-white/50 mb-6">{{ currentSong.artist }}</p>
+                    <audio id="audioPlayer" :src="currentPlayUrl" @timeupdate="updateLyric" @error="handleAudioError" controls autoplay class="w-full h-10"></audio>
+                    <div v-if="errorMsg" class="mt-2 text-pink-400 text-xs italic">正在尝试备用音源线路...</div>
+                </div>
+                
+                <div class="lyric-container">
+                    <div class="lyric-wrapper" :style="{ transform: `translateY(${lyricOffset}px)` }">
+                        <div v-for="(line, index) in parsedLyrics" :key="index"
+                             class="lyric-line" :class="{ active: currentLyricIndex === index }">
+                            {{ line.text }}
+                        </div>
+                        <div v-if="parsedLyrics.length === 0" class="pt-20 text-white/20">暂无歌词</div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-        const playSong = (song) => {
-            currentSong.value = song;
-            errorMsg.value = '';
-            // 默认尝试第一条线路
-            currentPlayUrl.value = getSources(song)[0];
-        };
+        <div class="glass-modern rounded-3xl overflow-hidden shadow-xl">
+            <div class="px-8 py-4 border-b border-white/5 bg-white/5">
+                <h3 class="text-sm font-bold text-white/60">搜索结果</h3>
+            </div>
+            <div class="max-h-[450px] overflow-y-auto">
+                <div v-for="(song, idx) in songs" :key="song.id" @click="playSong(song)" 
+                     class="song-item px-8 py-4 flex items-center gap-5 cursor-pointer transition-all border-b border-white/5 group">
+                    <div class="text-white/20 font-mono text-xs w-4">{{ idx + 1 }}</div>
+                    <img :src="song.cover" class="w-12 h-12 rounded-xl shadow-lg">
+                    <div class="flex-1">
+                        <div class="font-bold text-white group-hover:text-purple-400 transition-colors">{{ song.name }}</div>
+                        <div class="text-white/40 text-xs mt-1">{{ song.artist }}</div>
+                    </div>
+                    <div class="opacity-0 group-hover:opacity-100 transition-all text-purple-400 text-xl">▶</div>
+                </div>
+                <div v-if="!songs.length && !loading" class="p-20 text-center text-white/20 italic">输入关键词，开始聆听</div>
+            </div>
+        </div>
+    </div>
 
-        const handleAudioError = () => {
-            // 自动重试逻辑：如果线路1失败，尝试线路2，以此类推
-            console.error("当前线路失败，正在尝试切换...");
-            const sources = getSources(currentSong.value);
-            const currentIdx = sources.indexOf(currentPlayUrl.value);
-            if (currentIdx < sources.length - 1) {
-                currentPlayUrl.value = sources[currentIdx + 1];
-                errorMsg.value = `正在尝试备用线路 ${currentIdx + 2}...`;
-            } else {
-                errorMsg.value = "所有线路均无法播放，请搜索其他版本";
+    <script>
+        const { createApp, ref } = Vue;
+        const PROXY = 'https://proxy.api.030101.xyz/';
+
+        createApp({
+            setup() {
+                const keyword = ref('');
+                const songs = ref([]);
+                const loading = ref(false);
+                const currentSong = ref(null);
+                const currentPlayUrl = ref('');
+                const errorMsg = ref(false);
+                const parsedLyrics = ref([]);
+                const currentLyricIndex = ref(0);
+                const lyricOffset = ref(80);
+                const retryCount = ref(0);
+
+                const searchMusic = async () => {
+                    if (!keyword.value.trim()) return;
+                    loading.value = true;
+                    try {
+                        const postData = { req_1: { method: "DoSearchForQQMusicDesktop", module: "music.search.SearchCgiService", param: { num_per_page: 20, page_num: 1, query: keyword.value, search_type: 0 } } };
+                        const res = await axios.post(PROXY + 'https://u.y.qq.com/cgi-bin/musicu.fcg', postData);
+                        const list = res.data.req_1.data.body.song.list || [];
+                        songs.value = list.map(s => ({
+                            id: s.id, mid: s.mid, name: s.name, artist: s.singer.map(si => si.name).join('/'),
+                            cover: `https://y.gtimg.cn/music/photo_new/T002R300x300M000${s.album.mid}.jpg`
+                        }));
+                    } finally { loading.value = false; }
+                };
+
+                const playSong = async (song) => {
+                    currentSong.value = song;
+                    retryCount.value = 0;
+                    errorMsg.value = false;
+                    parsedLyrics.value = [];
+                    
+                    // 默认尝试音源线路 (集成了你提供的 LX 源逻辑)
+                    loadSource(song);
+                    fetchLyrics(song.mid);
+                };
+
+                const loadSource = (song) => {
+                    const sources = [
+                        // 线路 1: 咪咕源 (针对 晴天 等版权歌极稳)
+                        `https://api.paugram.com/music/?source=migu&name=${encodeURIComponent(song.name + ' ' + song.artist)}`,
+                        // 线路 2: 梨花解析 (ikun/huibq 常用接口)
+                        `https://api.lihuaboke.com/api/music/migu?name=${encodeURIComponent(song.name)}`,
+                        // 线路 3: 官方备用
+                        `https://music.nxinxz.com/kgqq/tx.php?id=${song.mid}&level=standard&type=mp3`
+                    ];
+                    currentPlayUrl.value = sources[retryCount.value];
+                };
+
+                const handleAudioError = () => {
+                    if (retryCount.value < 2) {
+                        retryCount.value++;
+                        errorMsg.value = true;
+                        loadSource(currentSong.value);
+                    }
+                };
+
+                const fetchLyrics = async (mid) => {
+                    try {
+                        const res = await axios.get(`https://api.lihuaboke.com/api/music/lrc?mid=${mid}`);
+                        if (res.data && res.data.lrc) parseLrc(res.data.lrc);
+                    } catch (e) { console.warn("歌词获取失败"); }
+                };
+
+                const parseLrc = (lrc) => {
+                    const lines = lrc.split('\n');
+                    const result = [];
+                    const timeExp = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
+                    lines.forEach(item => {
+                        const match = timeExp.exec(item);
+                        if (match) {
+                            const time = parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / 100;
+                            const text = item.replace(timeExp, '').trim();
+                            if (text) result.push({ time, text });
+                        }
+                    });
+                    parsedLyrics.value = result;
+                };
+
+                const updateLyric = (e) => {
+                    const currentTime = e.target.currentTime;
+                    for (let i = 0; i < parsedLyrics.value.length; i++) {
+                        if (currentTime > parsedLyrics.value[i].time && (!parsedLyrics.value[i+1] || currentTime < parsedLyrics.value[i+1].time)) {
+                            if (currentLyricIndex.value !== i) {
+                                currentLyricIndex.value = i;
+                                lyricOffset.value = 80 - (i * 44);
+                            }
+                            break;
+                        }
+                    }
+                };
+
+                return { keyword, songs, loading, currentSong, currentPlayUrl, errorMsg, parsedLyrics, currentLyricIndex, lyricOffset, searchMusic, playSong, updateLyric, handleAudioError };
             }
-        };
-
-        return { keyword, songs, loading, currentSong, currentPlayUrl, errorMsg, searchMusic, playSong, handleAudioError };
-    }
-}).mount('#app');
+        }).mount('#app');
+    </script>
+</body>
+</html>
